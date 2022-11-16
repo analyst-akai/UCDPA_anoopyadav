@@ -1,0 +1,475 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# # UCDPA Project  - Predicting quality of movie (based on IMDb rating) using machine learning algorithms
+
+# In[1]:
+
+
+# Filter out the warnings
+
+import warnings
+
+warnings.filterwarnings('ignore')
+
+
+# In[3]:
+
+
+# Importing the required libraries
+
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+
+# ## Get Data, Merge, Clean
+
+# In[5]:
+
+
+# Task1 - Data import from CSV (Comma Separated Values) / TSV (Tab Separated Values)
+
+## Subtask1.1 - Import the ratings csv as a dataframe (Contains the IMDb rating and votes information for titles)
+df_ratings_raw = pd.read_csv("C:\\Users\\anoop\\Desktop\\Data Analytics\\Project\\title.ratings.tsv\\data.tsv",
+                         sep="\t",low_memory=False, na_values=["\\N","nan"])
+
+## Subtask1.2 - Import the titles csv as a dataframe (Contains the information for titles)
+df_title_basics_raw = pd.read_csv("C:\\Users\\anoop\\Desktop\\Data Analytics\\Project\\title.basics.tsv\\data.tsv",
+                         sep="\t",low_memory=False, na_values=["\\N","nan"])
+
+## Subtask1.3 - Import the principals csv as a dataframe (Contains the principal cast/crew for titles)
+df_principals_raw = pd.read_csv("C:\\Users\\anoop\\Desktop\\Data Analytics\\Project\\title.principals.tsv\\data.tsv",
+                         sep="\t",low_memory=True, na_values=["\\N","nan"])
+
+## Subtask1.4 - Import the names csv as a dataframe (Contains the information for names)
+df_names_raw = pd.read_csv("C:\\Users\\anoop\\Desktop\\Data Analytics\\Project\\name.basics.tsv\\data.tsv",
+                         sep="\t",low_memory=False, na_values=["\\N","nan"])
+
+
+# ## Merge two data sets to get director names
+
+# In[6]:
+
+
+# Task2 - Extract the director names from dataframe principals and merge with dataframe names
+
+df_principals_raw = df_principals_raw[df_principals_raw["category"] == "director"]
+
+df_directors_names = pd.merge(df_principals_raw, df_names_raw[["nconst","primaryName"]], on = "nconst")
+
+df_directors_names["director-names"] = df_directors_names["category"]+"-"+df_directors_names["primaryName"]
+
+df_directors_names.drop(["ordering","nconst","category","job","characters","primaryName"], axis = 1, inplace = True)
+
+
+# In[7]:
+
+
+df_ratings_raw.describe
+
+
+# In[8]:
+
+
+df_title_basics_raw.describe
+
+
+# In[9]:
+
+
+df_principals_raw.describe
+
+
+# In[10]:
+
+
+df_names_raw.describe
+
+
+# In[11]:
+
+
+df_directors_names
+
+
+# ## Exclude unwanted data
+
+# In[13]:
+
+
+# Task3 - Exclude unwanted data
+
+df_ratings = df_ratings_raw
+
+#exclude the adult titles
+df_title_basics = df_title_basics_raw[df_title_basics_raw.isAdult == 0]
+
+#drop isAdult and endYear columns
+df_title_basics.drop(["isAdult","endYear"],axis=1,inplace=True)
+
+#only keep movie and tvmovie type titles. Exclude all other types of videos.
+df_title_basics = df_title_basics[(df_title_basics.titleType == "movie") | (df_title_basics.titleType == "tvMovie")]
+
+
+# In[14]:
+
+
+df_title_basics
+
+
+# ## Convert Genre data to dummy columns, Usage of RegEx
+
+# In[15]:
+
+
+# Task4 - Convert Genre data to dummy columns in dataframes <df_title_basics>, Usage of RegEx
+
+# Task 4.1 - Extract Genres into different columns
+
+from sklearn.feature_extraction.text import CountVectorizer
+
+temp = df_title_basics.genres.dropna()
+vec = CountVectorizer(token_pattern='(?u)\\b[\\w-]+\\b', analyzer='word').fit(temp)
+bag_of_genres = vec.transform(temp)
+unique_genres =  vec.get_feature_names_out()
+np.array(unique_genres)
+
+genres = pd.DataFrame(bag_of_genres.todense(),columns=unique_genres,index=temp.index)
+
+# Task 4.2 - Merge genre back into dataframes <df_title_basics>
+
+df_title_basics = pd.merge(df_title_basics,genres, left_index= True, right_index = True)
+
+
+# In[16]:
+
+
+df_title_basics
+
+
+# ## Merge dataframes, drop NaN values
+
+# In[17]:
+
+
+# Task5 - Merge dataframes <df_title_basics> & <df_ratings>, drop NaN values
+
+# Task 5.1 - Set a common index on both dataframes
+df_ratings.set_index('tconst')
+df_title_basics.set_index('tconst')
+
+# Task 5.2 - Merge the two datasets
+df_merge = pd.merge(df_title_basics,df_ratings,on = ('tconst'))
+
+#remove NA rows
+df_merge.dropna(inplace = True)
+
+df_merge.sort_values(['numVotes'], ascending = False)
+
+
+# ## Select only those directors who have directed more than 30 movies; Remove rows with less count of votes
+
+# In[21]:
+
+
+# Task6.1 - Select directors who have directed more than 30 movies
+
+df_merge['counter'] = 1
+
+df_director_count = pd.DataFrame(df_merge.groupby("director-names")["counter"].sum())
+
+df_director_count = df_director_count[df_director_count['counter']>30]
+
+df_director_count = pd.merge(df_director_count,df_directors_names[["tconst","director-names"]], on = "director-names")
+
+df_director_pivot = df_director_count.pivot_table(values = 'counter', index = 'tconst', columns = 'director-names', fill_value = 0, aggfunc = 'count')
+
+df_merge = pd.merge(df_merge,df_director_pivot,on = ('tconst'))
+
+# Task6.2 - Remove rows with less count of votes
+
+df_merge = df_merge[df_merge['numVotes']>100]
+
+
+# In[20]:
+
+
+df_merge
+
+
+# ## Explore Data and Create Charts
+# ### Films Per Year, Voters Per Year
+
+# In[22]:
+
+
+# Task7 - Chart the trend of number of films per year and number of voters per year
+merged_temp = pd.merge(df_title_basics, df_ratings_raw, on="tconst",how="left")
+merged_temp = merged_temp[(merged_temp.startYear.notnull())&(merged_temp.startYear<2022)]
+counts_yearly = merged_temp.groupby("startYear").agg({"averageRating":[np.median],
+                                                     "numVotes":[np.sum,np.size,lambda x: np.sum(x)/np.size(x)]})
+
+max_count_year = int(counts_yearly[("numVotes","sum")].idxmax())
+max_year = int(counts_yearly[("numVotes","size")].idxmax())
+
+plt.figure(figsize=(15,5))
+
+plt.subplot(1,2,1)
+ax =counts_yearly[("numVotes","size")].plot()
+ax.annotate(max_year,xy=(max_year,counts_yearly[("numVotes","size")].max()),
+            xytext=(1980,10000), arrowprops=dict(color="sandybrown",shrink=0.05,width=1))
+ax.annotate("WW I",xy=(1914,counts_yearly[("numVotes","size")].loc[1914]), xytext=(1900,2000), 
+            arrowprops=dict(color="sandybrown",shrink=0.05,width=1))
+ax.annotate("WW II",xy=(1939,counts_yearly[("numVotes","size")].loc[1939]), xytext=(1950,4000), 
+            arrowprops=dict(color="sandybrown",shrink=0.05,width=1))
+plt.title("Total Number Films per Year",fontweight="bold")
+
+plt.subplot(1,2,2)
+ax =counts_yearly[("numVotes","sum")].plot()
+ax.annotate(max_count_year,xy=(max_count_year,counts_yearly[("numVotes","sum")].max()),
+            xytext=(1960,3e7),arrowprops=dict(shrink=0.05,color="sandybrown",width=2))
+plt.title("Total Number of Voters per Year",fontweight="bold")
+plt.show()
+
+Number of movies per year seems to have peaked in 2017 and the number of voters per year seems to have peaked in 2013 and is steadily declining after that.
+# ## Number of Movies Bucketed by Count of Votes
+
+# In[23]:
+
+
+buckets = 20
+plt.figure(figsize=(15,8))
+bins = pd.qcut(df_ratings.numVotes,buckets,duplicates="drop").value_counts()
+sns.barplot(x=bins.values,y=bins.index,orient="h")
+plt.title("Number of Movies Bucketed by Count of Votes",fontweight="bold")
+plt.show()
+
+Only 5% movies have vote count more than 1200, 95% movies have total vote count less than 1200
+# ## Average Rating and Average Number of Votes Per Year
+
+# In[24]:
+
+
+year_rating_votes = pd.pivot_table(data = df_merge, values = ["averageRating","numVotes"], index = "startYear")
+ax = year_rating_votes.plot(y = ["averageRating"], kind = 'line', legend = False)
+ax2 = ax.twinx()
+year_rating_votes.plot(y = ["numVotes"], kind = 'line', ax = ax2, color = 'r', legend = False)
+ax.legend()
+ax2.legend()
+ax.grid(True)
+plt.title("Average Rating and Average Number of Votes Per Year",fontweight="bold")
+plt.show()
+
+Average Rating per year seems to be steadily declining since 50s. Is it that no longer good movies are being made or the number of poor movies is more in recent times which brings down the per year average. This will be an interesting analysis for a later day
+# ## Genre-wise Breakup of Films (%)
+
+# In[25]:
+
+
+genres = pd.DataFrame(bag_of_genres.todense(),columns=unique_genres,index=temp.index)
+sorted_genres_perc = 100*pd.Series(genres.sum()).sort_values(ascending=False)/genres.shape[0]
+plt.figure(figsize=(15,8))
+sns.barplot(x=sorted_genres_perc.values,y=sorted_genres_perc.index,orient="h")
+plt.grid(True)
+plt.xlabel("Percentage of Films (%)")
+plt.title("Genrewise Breakup of Films (%)",fontweight="bold")
+plt.show()
+
+The most prominent genre is 'Drama' with around 39% movies in this category. This is followed by genre 'Documentary' with about 24% movies. 'Film-noir', 'talk-show', 'game-show', 'adult', 'short' genres are on the fringes with very small percentage numbers.
+# ## Breakup by Type of Video
+
+# In[27]:
+
+
+df_title_basics_raw.titleType.value_counts().plot.pie(autopct="%.0f%%",figsize=(6,6),pctdistance=0.8,
+                                                 wedgeprops=dict(width=0.4))
+plt.title("Breakup by Type of Video",fontweight="bold")
+plt.show()
+
+
+# In[28]:
+
+
+df_title_basics.titleType.value_counts().plot.pie(autopct="%.0f%%",figsize=(6,6),pctdistance=0.8,
+                                                 wedgeprops=dict(width=0.4))
+plt.show()
+
+
+# ## Machine Learning
+# ### Define column "isGood" for prediction using ML
+
+# In[29]:
+
+
+df_movies = df_merge
+
+# Add new column 'isGood' and set it to 1 if averageRating > 6.5, else 0. This column will be used for prediction.
+df_movies["isGood"] = np.where(df_movies["averageRating"] > 6.5, 1, 0)
+
+# Drop averageRating column
+df_movies = df_movies.drop("averageRating", axis = 1)
+
+
+# ## Spliting feature (x) and value to be predicted (y)
+
+# In[30]:
+
+
+# Set x , y datasets for machine learning
+
+y = df_movies["isGood"]
+
+x = df_movies.drop(["isGood","tconst","titleType", "primaryTitle", "originalTitle","genres", "director-names"], axis = 1)
+
+
+# In[31]:
+
+
+class color:
+   PURPLE = '\033[95m'
+   CYAN = '\033[96m'
+   DARKCYAN = '\033[36m'
+   BLUE = '\033[94m'
+   GREEN = '\033[92m'
+   YELLOW = '\033[93m'
+   RED = '\033[91m'
+   BOLD = '\033[1m'
+   UNDERLINE = '\033[4m'
+   END = '\033[0m'
+
+
+# ## Create a new function to print machine learning stats
+
+# In[32]:
+
+
+def print_stats (xtest, ytest, ypred, model):
+    print(color.BOLD+color.BLUE+color.UNDERLINE+ "Score" + color.END, model.score(xtest, ytest))
+    print(color.BOLD+color.BLUE+color.UNDERLINE+"Confusion Matrix"+color.END)
+    print(confusion_matrix(ytest, ypred))
+    print(color.BOLD+color.BLUE+color.UNDERLINE+"Classification Report"+color.END)
+    print(classification_report(ytest, ypred))
+    return
+
+
+# ## Prediction Model
+
+# In[33]:
+
+
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+x_train, x_test, y_train, y_test = train_test_split(x,y, test_size = 0.3,
+                                                   random_state=21, stratify = y)
+
+
+# ## Machine Learning - KNN
+
+# In[35]:
+
+
+from sklearn.neighbors import KNeighborsClassifier
+
+knn = KNeighborsClassifier(n_neighbors=16)
+knn.fit(x_train, y_train)
+y_pred = knn.predict(x_test)
+print_stats(x_test, y_test, y_pred, knn)
+
+
+# ## Machine Learning - Logistic Regression
+
+# In[36]:
+
+
+from sklearn.linear_model import LogisticRegression
+
+logreg = LogisticRegression()
+logreg.fit(x_train, y_train)
+y_pred = logreg.predict(x_test)
+print_stats(x_test, y_test, y_pred,logreg)
+
+
+# ## ROC Curve
+
+# In[37]:
+
+
+from sklearn.metrics import roc_curve
+
+fpr, tpr, thresholds = roc_curve(y_test, logreg.predict_proba(x_test)[:,1] )
+plt.plot([0,1],[0,1],'k--')
+plt.plot(fpr, tpr)
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Logistic Regression ROC Curve')
+plt.show()
+
+
+# ## Hyper Parameter Tuning
+
+# In[38]:
+
+
+from sklearn.model_selection import GridSearchCV, KFold
+
+kf = KFold(n_splits = 5, shuffle = True, random_state = 42)
+param_grid = {"n_neighbors" : np.arange(1,20,5)}
+knn1 = KNeighborsClassifier()
+knn_cv = GridSearchCV(knn1, param_grid,cv = kf)
+knn_cv.fit(x_train,y_train)
+print(knn_cv.best_params_, knn_cv.best_score_)
+
+
+# ## Bagging
+
+# In[40]:
+
+
+#Bagging and Logistic Regression
+
+from sklearn.ensemble import BaggingClassifier
+
+clf_lr = LogisticRegression()
+clf_bag = BaggingClassifier(base_estimator = clf_lr)
+clf_bag.fit(x_train,y_train)
+y_pred = clf_bag.predict(x_test)
+print_stats(x_test, y_test, y_pred,clf_bag)
+
+
+# ## Random Forest
+
+# In[41]:
+
+
+from sklearn.ensemble import RandomForestClassifier
+
+clf_rf = RandomForestClassifier(max_features = 35, max_depth = 50, bootstrap = True)
+clf_rf.fit(x_train, y_train)
+y_pred = clf_rf.predict(x_test)
+print_stats(x_test, y_test, y_pred,clf_rf)
+
+
+# In[42]:
+
+
+results = pd.DataFrame({("Tuned KNN",knn.score(x_test, y_test)), 
+                        ("Logistic Regression",logreg.score(x_test,y_test)),
+                       ("Bagging", clf_bag.score(x_test,y_test)),
+                       ("Random Forest",clf_rf.score(x_test,y_test))})
+
+
+# In[43]:
+
+
+results = results.set_index(results[0]).sort_values(1)
+
+
+# In[44]:
+
+
+ax = results.plot(y = [1], kind = 'line', legend = False)
+ax.grid(True)
+plt.title("Scores of Different ML Models",fontweight="bold")
+plt.show()
